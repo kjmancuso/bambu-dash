@@ -105,6 +105,61 @@
     font-size: 9px; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);
     font-weight: 600;
   }
+  section.timelapses {
+    max-width: 1400px; margin: 0 auto; padding: 0 16px 32px;
+  }
+  section.timelapses h2 {
+    margin: 8px 0 12px; font-size: 14px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .tl-grid {
+    display: grid; gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+  .tl-card {
+    background: var(--panel); border: 1px solid #222; border-radius: 10px;
+    overflow: hidden; cursor: pointer; transition: transform 0.15s ease;
+  }
+  .tl-card:hover { transform: translateY(-2px); border-color: #333; }
+  .tl-thumb {
+    aspect-ratio: 16/9; background: #000;
+    display: flex; align-items: center; justify-content: center;
+    color: #555; font-size: 12px;
+  }
+  .tl-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tl-meta { padding: 10px 12px; }
+  .tl-name {
+    font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tl-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .tl-empty {
+    grid-column: 1 / -1; color: var(--muted); font-size: 13px;
+    padding: 16px; text-align: center; background: var(--panel);
+    border-radius: 10px; border: 1px solid #222;
+  }
+  .lightbox {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100;
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .lightbox.show { display: flex; }
+  .lightbox-inner {
+    position: relative; max-width: 95vw; max-height: 95vh;
+    background: #000; border-radius: 8px; overflow: hidden;
+  }
+  .lightbox video { max-width: 95vw; max-height: 85vh; display: block; }
+  .lightbox-title {
+    position: absolute; top: 8px; left: 12px; color: #fff;
+    background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 4px;
+    font-size: 12px; pointer-events: none;
+  }
+  .lightbox-close {
+    position: absolute; top: 8px; right: 8px;
+    background: rgba(0,0,0,0.6); color: #fff; border: 0; border-radius: 50%;
+    width: 32px; height: 32px; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
 </style>
 </head>
 <body>
@@ -157,6 +212,19 @@
     </div>
   </div>
 </main>
+
+<section class="timelapses" id="timelapses-section" hidden>
+  <h2>Timelapses</h2>
+  <div class="tl-grid" id="tl-grid"></div>
+</section>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true">
+  <div class="lightbox-inner">
+    <div class="lightbox-title" id="lightbox-title"></div>
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+    <video id="lightbox-video" controls preload="metadata"></video>
+  </div>
+</div>
 
 <script>
 function fmtTemp(v) { return v == null ? "—" : `${Math.round(v)}°C`; }
@@ -288,6 +356,83 @@ function renderAms(ams) {
 
   root.innerHTML = html + extraHtml;
 }
+
+function fmtBytes(n) {
+  if (n == null) return "";
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${u[i]}`;
+}
+function fmtDate(s) {
+  const d = new Date(s * 1000);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString();
+}
+
+async function loadTimelapses() {
+  try {
+    const r = await fetch("/api/timelapses");
+    const data = await r.json();
+    const items = data.items || [];
+    const section = document.getElementById("timelapses-section");
+    const grid = document.getElementById("tl-grid");
+    if (items.length === 0) {
+      section.hidden = true;
+      grid.innerHTML = "";
+      return;
+    }
+    section.hidden = false;
+    grid.innerHTML = items.map(it => {
+      const thumb = it.thumbnail
+        ? `<img src="/timelapses/thumbnail/${encodeURIComponent(it.thumbnail)}" alt="" loading="lazy">`
+        : "no thumbnail";
+      return `
+        <div class="tl-card" data-name="${encodeURIComponent(it.name)}" data-title="${it.name}">
+          <div class="tl-thumb">${thumb}</div>
+          <div class="tl-meta">
+            <div class="tl-name" title="${it.name}">${it.name}</div>
+            <div class="tl-sub">${fmtDate(it.mtime)} · ${fmtBytes(it.size)}</div>
+          </div>
+        </div>`;
+    }).join("");
+  } catch (e) {
+    // leave panel as-is on transient errors
+  }
+}
+
+function openTimelapse(name, title) {
+  const lb = document.getElementById("lightbox");
+  const video = document.getElementById("lightbox-video");
+  video.src = "/timelapses/" + name;
+  document.getElementById("lightbox-title").textContent = title;
+  lb.classList.add("show");
+  video.play().catch(() => { /* user can click play */ });
+}
+function closeLightbox() {
+  const lb = document.getElementById("lightbox");
+  const video = document.getElementById("lightbox-video");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  lb.classList.remove("show");
+}
+
+document.getElementById("tl-grid").addEventListener("click", e => {
+  const card = e.target.closest(".tl-card");
+  if (!card) return;
+  openTimelapse(card.dataset.name, card.dataset.title);
+});
+document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
+document.getElementById("lightbox").addEventListener("click", e => {
+  if (e.target.id === "lightbox") closeLightbox();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeLightbox();
+});
+
+loadTimelapses();
+setInterval(loadTimelapses, 30000);
 
 document.getElementById("cam").addEventListener("error", () => {
   setTimeout(() => {

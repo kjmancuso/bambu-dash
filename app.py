@@ -27,7 +27,7 @@ import time
 from queue import Queue, Empty, Full
 
 import paho.mqtt.client as mqtt
-from flask import Flask, Response, jsonify, render_template
+from flask import Flask, Response, jsonify, render_template, send_from_directory
 
 PRINTER_IP = os.environ.get("PRINTER_IP", "")
 PRINTER_SERIAL = os.environ.get("PRINTER_SERIAL", "")
@@ -491,6 +491,48 @@ def api_status():
             "connected": _status["connected"],
             "summary": _summarize(_status["raw"]),
         })
+
+
+VIDEO_EXTS = (".mp4", ".avi", ".mkv", ".mov")
+THUMB_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+@app.route("/api/timelapses")
+def api_timelapses():
+    if not TIMELAPSE_DIR or not os.path.isdir(TIMELAPSE_DIR):
+        return jsonify({"items": []})
+    thumb_dir = os.path.join(TIMELAPSE_DIR, "thumbnail")
+    thumbs = {}
+    if os.path.isdir(thumb_dir):
+        for fname in os.listdir(thumb_dir):
+            base, ext = os.path.splitext(fname)
+            if ext.lower() in THUMB_EXTS:
+                thumbs[base] = fname
+    items = []
+    for entry in os.scandir(TIMELAPSE_DIR):
+        if not entry.is_file():
+            continue
+        if not entry.name.lower().endswith(VIDEO_EXTS):
+            continue
+        base = os.path.splitext(entry.name)[0]
+        stat = entry.stat()
+        items.append({
+            "name": entry.name,
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+            "thumbnail": thumbs.get(base),
+        })
+    items.sort(key=lambda i: i["mtime"], reverse=True)
+    return jsonify({"items": items})
+
+
+@app.route("/timelapses/<path:filename>")
+def serve_timelapse(filename):
+    if not TIMELAPSE_DIR:
+        return "", 404
+    # send_from_directory blocks ../ traversal and supports HTTP Range,
+    # which the browser needs to seek inside <video> elements.
+    return send_from_directory(TIMELAPSE_DIR, filename, conditional=True)
 
 
 @app.route("/stream.mjpg")
