@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bambu H2D Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --fg: #e6e8ec; --muted: #8a93a3;
+    --accent: #4ade80; --warn: #f59e0b; --err: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 16px 24px; display: flex; align-items: baseline; gap: 12px;
+    border-bottom: 1px solid #222;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); display: inline-block;
+  }
+  header .dot.ok { background: var(--accent); }
+  header .dot.bad { background: var(--err); }
+  main {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border-radius: 12px; padding: 16px;
+    border: 1px solid #222;
+  }
+  .cam {
+    padding: 0; overflow: hidden; aspect-ratio: 16/9;
+    display: flex; align-items: center; justify-content: center; background: #000;
+  }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .job { font-size: 14px; color: var(--muted); margin-bottom: 4px; }
+  .job-name { font-size: 18px; font-weight: 600; margin-bottom: 12px; word-break: break-all; }
+  .state {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 12px; background: #2b313c; color: var(--muted);
+  }
+  .state.running { background: rgba(74, 222, 128, 0.15); color: var(--accent); }
+  .state.pause { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
+  .state.failed { background: rgba(239, 68, 68, 0.15); color: var(--err); }
+  .progress {
+    width: 100%; height: 8px; background: #2b313c; border-radius: 999px;
+    overflow: hidden; margin: 14px 0 6px;
+  }
+  .progress-bar {
+    height: 100%; background: var(--accent); width: 0%;
+    transition: width 0.4s ease;
+  }
+  .progress-meta {
+    display: flex; justify-content: space-between; font-size: 13px;
+    color: var(--muted); margin-bottom: 16px;
+  }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { background: #11141a; padding: 10px 12px; border-radius: 8px; }
+  .stat .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
+  .stat .sub { font-size: 12px; color: var(--muted); }
+  .err {
+    margin-top: 12px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(239, 68, 68, 0.1); color: var(--err); font-size: 13px;
+    display: none;
+  }
+  .err.show { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Bambu H2D</h1>
+  <span class="dot" id="conn"></span>
+  <span id="conn-text" style="color: var(--muted); font-size: 13px;">connecting…</span>
+</header>
+<main>
+  <div class="panel cam">
+    <img id="cam" src="/stream.mjpg" alt="printer camera">
+  </div>
+  <div class="panel">
+    <div class="job">CURRENT JOB</div>
+    <div class="job-name" id="job">—</div>
+    <span class="state" id="state">UNKNOWN</span>
+
+    <div class="progress"><div class="progress-bar" id="bar"></div></div>
+    <div class="progress-meta">
+      <span id="pct">0%</span>
+      <span id="remaining">—</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="label">Nozzle</div>
+        <div class="value" id="nozzle">—</div>
+        <div class="sub" id="nozzle-target"></div>
+      </div>
+      <div class="stat">
+        <div class="label">Bed</div>
+        <div class="value" id="bed">—</div>
+        <div class="sub" id="bed-target"></div>
+      </div>
+      <div class="stat">
+        <div class="label">Chamber</div>
+        <div class="value" id="chamber">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Layer</div>
+        <div class="value" id="layer">—</div>
+      </div>
+    </div>
+
+    <div class="err" id="err"></div>
+  </div>
+</main>
+
+<script>
+function fmtTemp(v) { return v == null ? "—" : `${Math.round(v)}°C`; }
+function fmtTarget(v) { return v == null || v === 0 ? "" : `→ ${Math.round(v)}°C`; }
+function fmtRemaining(min) {
+  if (min == null) return "—";
+  if (min <= 0) return "done";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h ? `${h}h ${m}m remaining` : `${m}m remaining`;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("/api/status");
+    const data = await r.json();
+    const conn = document.getElementById("conn");
+    const connText = document.getElementById("conn-text");
+    conn.className = "dot " + (data.connected ? "ok" : "bad");
+    connText.textContent = data.connected ? "connected" : "disconnected";
+
+    const s = data.summary || {};
+    document.getElementById("job").textContent = s.job || "—";
+
+    const state = (s.state || "UNKNOWN").toUpperCase();
+    const stateEl = document.getElementById("state");
+    stateEl.textContent = state;
+    stateEl.className = "state " + (
+      state === "RUNNING" ? "running" :
+      state === "PAUSE" ? "pause" :
+      state === "FAILED" ? "failed" : ""
+    );
+
+    const pct = s.progress ?? 0;
+    document.getElementById("bar").style.width = pct + "%";
+    document.getElementById("pct").textContent = pct + "%";
+    document.getElementById("remaining").textContent = fmtRemaining(s.remaining_min);
+
+    document.getElementById("nozzle").textContent = fmtTemp(s.nozzle_temp);
+    document.getElementById("nozzle-target").textContent = fmtTarget(s.nozzle_target);
+    document.getElementById("bed").textContent = fmtTemp(s.bed_temp);
+    document.getElementById("bed-target").textContent = fmtTarget(s.bed_target);
+    document.getElementById("chamber").textContent = fmtTemp(s.chamber_temp);
+
+    if (s.layer != null && s.total_layers != null) {
+      document.getElementById("layer").textContent = `${s.layer} / ${s.total_layers}`;
+    } else {
+      document.getElementById("layer").textContent = "—";
+    }
+
+    const err = document.getElementById("err");
+    if (s.error && s.error !== 0) {
+      err.textContent = "Printer error code: " + s.error;
+      err.classList.add("show");
+    } else {
+      err.classList.remove("show");
+    }
+  } catch (e) {
+    document.getElementById("conn").className = "dot bad";
+    document.getElementById("conn-text").textContent = "dashboard offline";
+  }
+}
+
+document.getElementById("cam").addEventListener("error", () => {
+  setTimeout(() => {
+    document.getElementById("cam").src = "/stream.mjpg?t=" + Date.now();
+  }, 2000);
+});
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>
