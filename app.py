@@ -48,6 +48,44 @@ def _merge(dst, src):
             dst[k] = v
 
 
+def _int_or_none(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _summarize_tray(tray):
+    color = (tray.get("tray_color") or "").strip()
+    rgb = color[:6] if len(color) >= 6 else None  # strip alpha if "RRGGBBAA"
+    ttype = (tray.get("tray_type") or "").strip()
+    return {
+        "id": _int_or_none(tray.get("id")),
+        "type": ttype or None,
+        "color": f"#{rgb}" if rgb and rgb != "000000" else None,
+        "remain": _int_or_none(tray.get("remain")),  # -1 or 0..100
+        "empty": not ttype,
+    }
+
+
+def _summarize_ams(p):
+    ams_root = p.get("ams") or {}
+    units = []
+    for unit in ams_root.get("ams") or []:
+        units.append({
+            "id": _int_or_none(unit.get("id")),
+            "humidity": _int_or_none(unit.get("humidity")),
+            "temp": _int_or_none(float(unit["temp"])) if unit.get("temp") not in (None, "") else None,
+            "trays": [_summarize_tray(t) for t in unit.get("tray") or []],
+        })
+    vt = p.get("vt_tray")
+    return {
+        "units": units,
+        "active_tray": ams_root.get("tray_now"),  # global tray id as string
+        "external": _summarize_tray(vt) if isinstance(vt, dict) else None,
+    }
+
+
 def _summarize(raw):
     p = raw.get("print", {}) if isinstance(raw, dict) else {}
     return {
@@ -65,6 +103,7 @@ def _summarize(raw):
         "speed_level": p.get("spd_lvl"),
         "wifi": p.get("wifi_signal"),
         "error": p.get("print_error"),
+        "ams": _summarize_ams(p),
     }
 
 

@@ -70,6 +70,41 @@
     display: none;
   }
   .err.show { display: block; }
+  .ams { margin-top: 16px; }
+  .ams h2 {
+    margin: 0 0 8px; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+  }
+  .ams-unit {
+    background: #11141a; border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .ams-unit-head {
+    display: flex; justify-content: space-between; font-size: 12px;
+    color: var(--muted); margin-bottom: 8px;
+  }
+  .ams-trays { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .tray {
+    position: relative; aspect-ratio: 1; border-radius: 6px;
+    background: #2b313c; overflow: hidden; border: 2px solid transparent;
+    display: flex; align-items: flex-end; justify-content: center;
+  }
+  .tray.empty { opacity: 0.35; }
+  .tray.active { border-color: var(--accent); }
+  .tray-fill {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--tray-color, #555); transition: height 0.3s ease;
+  }
+  .tray-label {
+    position: relative; z-index: 1; font-size: 10px; font-weight: 600;
+    color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);
+    padding: 0 0 4px;
+  }
+  .tray-type {
+    position: absolute; top: 4px; left: 4px; z-index: 1;
+    font-size: 9px; color: #fff; text-shadow: 0 0 4px rgba(0,0,0,0.8);
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -115,6 +150,11 @@
     </div>
 
     <div class="err" id="err"></div>
+
+    <div class="ams" id="ams-section" style="display:none">
+      <h2>AMS</h2>
+      <div id="ams-units"></div>
+    </div>
   </div>
 </main>
 
@@ -174,10 +214,79 @@ async function tick() {
     } else {
       err.classList.remove("show");
     }
+
+    renderAms(s.ams);
   } catch (e) {
     document.getElementById("conn").className = "dot bad";
     document.getElementById("conn-text").textContent = "dashboard offline";
   }
+}
+
+function renderAms(ams) {
+  const section = document.getElementById("ams-section");
+  const root = document.getElementById("ams-units");
+  const units = ams && ams.units ? ams.units : [];
+  if (units.length === 0 && !(ams && ams.external && !ams.external.empty)) {
+    section.style.display = "none";
+    return;
+  }
+  section.style.display = "block";
+
+  const activeTray = ams.active_tray != null ? parseInt(ams.active_tray, 10) : -1;
+  const html = units.map(unit => {
+    const headBits = [];
+    if (unit.humidity != null) headBits.push(`humidity ${unit.humidity}/5`);
+    if (unit.temp != null) headBits.push(`${unit.temp}°C`);
+    const head = headBits.join(" · ") || "";
+    const trays = (unit.trays || []).map(t => {
+      const globalId = (unit.id ?? 0) * 4 + (t.id ?? 0);
+      const active = globalId === activeTray;
+      const remain = t.remain != null && t.remain >= 0 ? t.remain : null;
+      const fill = t.empty ? 0 : (remain != null ? remain : 100);
+      const color = t.color || "#555";
+      const cls = ["tray"];
+      if (t.empty) cls.push("empty");
+      if (active) cls.push("active");
+      const label = t.empty ? "" : (remain != null ? `${remain}%` : "?");
+      const typeLabel = t.empty ? "" : (t.type || "");
+      return `
+        <div class="${cls.join(" ")}" style="--tray-color: ${color}">
+          <div class="tray-type">${typeLabel}</div>
+          <div class="tray-fill" style="height: ${fill}%; background: ${color}"></div>
+          <div class="tray-label">${label}</div>
+        </div>`;
+    }).join("");
+    return `
+      <div class="ams-unit">
+        <div class="ams-unit-head">
+          <span>AMS ${unit.id ?? "?"}</span>
+          <span>${head}</span>
+        </div>
+        <div class="ams-trays">${trays}</div>
+      </div>`;
+  }).join("");
+
+  let extraHtml = "";
+  if (ams.external && !ams.external.empty) {
+    const t = ams.external;
+    const remain = t.remain != null && t.remain >= 0 ? `${t.remain}%` : "loaded";
+    const active = activeTray === 254;
+    extraHtml = `
+      <div class="ams-unit">
+        <div class="ams-unit-head">
+          <span>External spool</span>
+          <span>${t.type || ""}</span>
+        </div>
+        <div class="ams-trays" style="grid-template-columns: 1fr">
+          <div class="tray${active ? ' active' : ''}" style="--tray-color: ${t.color || '#555'}; aspect-ratio: 4/1">
+            <div class="tray-fill" style="height: 100%; background: ${t.color || '#555'}"></div>
+            <div class="tray-label">${remain}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  root.innerHTML = html + extraHtml;
 }
 
 document.getElementById("cam").addEventListener("error", () => {
