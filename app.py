@@ -162,7 +162,7 @@ def _mqtt_loop():
 # Bambu printers expose vsFTPd on :990 (implicit TLS). Auth uses bblp + access
 # code. Timelapses live under /timelapse on the SD card. We periodically scan
 # and pull anything we don't have a complete local copy of.
-TIMELAPSE_DIR = os.environ.get("TIMELAPSE_DIR", "/timelapse")
+TIMELAPSE_DIR = os.environ.get("TIMELAPSE_DIR", "/timelapses")
 TIMELAPSE_REMOTE_DIR = os.environ.get("TIMELAPSE_REMOTE_DIR", "/timelapse")
 TIMELAPSE_POLL_SECONDS = int(os.environ.get("TIMELAPSE_POLL_SECONDS", "300"))
 
