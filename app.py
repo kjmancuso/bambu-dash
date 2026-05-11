@@ -281,7 +281,6 @@ def api_status():
         return jsonify({
             "connected": _status["connected"],
             "summary": _summarize(_status["raw"]),
-            "raw": _status["raw"],
         })
 
 
