@@ -156,16 +156,20 @@ def _mqtt_loop():
             time.sleep(5)
 
 
-# ----- Camera (RTSPS on port 322, via ffmpeg) -----
-# H2D exposes its chamber camera as RTSPS. Requires Developer Mode + LAN Liveview
-# both enabled on the printer. We let ffmpeg handle TLS, RTSP, and H.264/H.265
-# decode, then take its MJPEG output and fan it out to /stream.mjpg subscribers.
+# ----- Camera (RTSP/RTSPS via ffmpeg) -----
+# Default: direct to the printer's RTSPS endpoint on port 322. Requires Developer
+# Mode + LAN Only Mode on the printer.
+# Override: set CAMERA_URL to point at a relay (e.g. MediaMTX on a Mac mini
+# running Bambu Studio Go Live) and the printer can stay in cloud mode.
 CAM_PORT = int(os.environ.get("CAMERA_PORT", "322"))
 CAM_PATH = os.environ.get("CAMERA_PATH", "/streaming/live/1")
 CAM_FPS = int(os.environ.get("CAMERA_FPS", "10"))
+CAM_URL = os.environ.get("CAMERA_URL", "")
 
 
 def _rtsp_url():
+    if CAM_URL:
+        return CAM_URL
     return f"rtsps://bblp:{PRINTER_ACCESS_CODE}@{PRINTER_IP}:{CAM_PORT}{CAM_PATH}"
 
 

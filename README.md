@@ -78,7 +78,7 @@ repository. The image contract you need to match:
 | ---------------- | -------------------------------------------------------------------- |
 | Container port   | `5000` (HTTP)                                                        |
 | Required env     | `PRINTER_IP`, `PRINTER_SERIAL`, `PRINTER_ACCESS_CODE`                |
-| Optional env     | `CAMERA_PORT` (322), `CAMERA_PATH` (`/streaming/live/1`), `CAMERA_FPS` (10) |
+| Optional env     | `CAMERA_URL` (overrides auto URL — point at a relay), `CAMERA_PORT` (322), `CAMERA_PATH` (`/streaming/live/1`), `CAMERA_FPS` (10) |
 | Liveness         | `GET /healthz` → 200                                                 |
 | Readiness        | `GET /healthz` → 200                                                 |
 | User             | UID 1000, non-root                                                   |
