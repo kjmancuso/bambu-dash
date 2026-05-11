@@ -168,8 +168,9 @@ TIMELAPSE_POLL_SECONDS = int(os.environ.get("TIMELAPSE_POLL_SECONDS", "300"))
 
 
 class _ImplicitFTPS(ftplib.FTP_TLS):
-    """ftplib.FTP_TLS uses explicit TLS (AUTH TLS on a plaintext socket).
-    Bambu uses implicit TLS — the socket is TLS-wrapped before any FTP banner.
+    """Bambu's vsFTPd requires (a) implicit TLS on port 990 and (b) data-channel
+    TLS sessions to be reused from the control channel (`522 session reuse
+    required`). Stock ftplib.FTP_TLS does neither.
     """
 
     def connect(self, host="", port=0, timeout=-999, source_address=None):
@@ -185,6 +186,16 @@ class _ImplicitFTPS(ftplib.FTP_TLS):
         self.file = self.sock.makefile("r")
         self.welcome = self.getresp()
         return self.welcome
+
+    def ntransfercmd(self, cmd, rest=None):
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(
+                conn,
+                server_hostname=self.host,
+                session=self.sock.session,
+            )
+        return conn, size
 
 
 def _parse_mlsd(line):
