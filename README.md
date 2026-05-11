@@ -78,7 +78,7 @@ repository. The image contract you need to match:
 | ---------------- | -------------------------------------------------------------------- |
 | Container port   | `5000` (HTTP)                                                        |
 | Required env     | `PRINTER_IP`, `PRINTER_SERIAL`, `PRINTER_ACCESS_CODE`                |
-| Optional env     | `CAMERA_URL` (overrides auto URL — point at a relay), `CAMERA_PORT` (322), `CAMERA_PATH` (`/streaming/live/1`), `CAMERA_FPS` (10) |
+| Optional env     | `CAMERA_URL` (overrides auto URL — point at a relay), `CAMERA_PORT` (322), `CAMERA_PATH` (`/streaming/live/1`), `CAMERA_FPS` (10), `TIMELAPSE_DIR` (`/timelapse`, set to `""` to disable), `TIMELAPSE_REMOTE_DIR` (`/timelapse`), `TIMELAPSE_POLL_SECONDS` (300) |
 | Liveness         | `GET /healthz` → 200                                                 |
 | Readiness        | `GET /healthz` → 200                                                 |
 | User             | UID 1000, non-root                                                   |
@@ -88,6 +88,11 @@ repository. The image contract you need to match:
 If you set `readOnlyRootFilesystem: true`, mount an `emptyDir` at
 `/home/app` so gunicorn can create its control socket
 (`/home/app/.gunicorn/gunicorn.ctl`).
+
+To persist timelapses across pod restarts, mount a `PersistentVolumeClaim`
+at `/timelapse`. The container pulls new files from the printer's FTPS
+server every `TIMELAPSE_POLL_SECONDS` seconds; files already present
+locally with matching size are skipped.
 
 The pod must be able to route to the printer's IP. If your CNI doesn't
 bridge to the LAN by default, `hostNetwork: true` works.

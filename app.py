@@ -15,9 +15,11 @@ On the H2D you must enable BOTH:
   - Developer Mode   (opens port 322 on the printer for LAN clients)
 Otherwise port 322 stays closed and ffmpeg will fail to connect.
 """
+import ftplib
 import json
 import os
 import shutil
+import socket
 import ssl
 import subprocess
 import threading
@@ -154,6 +156,122 @@ def _mqtt_loop():
                 _status["connected"] = False
             print(f"[mqtt] {e!r}; reconnecting in 5s")
             time.sleep(5)
+
+
+# ----- Timelapse sync (FTPS pull from printer's SD card) -----
+# Bambu printers expose vsFTPd on :990 (implicit TLS). Auth uses bblp + access
+# code. Timelapses live under /timelapse on the SD card. We periodically scan
+# and pull anything we don't have a complete local copy of.
+TIMELAPSE_DIR = os.environ.get("TIMELAPSE_DIR", "/timelapse")
+TIMELAPSE_REMOTE_DIR = os.environ.get("TIMELAPSE_REMOTE_DIR", "/timelapse")
+TIMELAPSE_POLL_SECONDS = int(os.environ.get("TIMELAPSE_POLL_SECONDS", "300"))
+
+
+class _ImplicitFTPS(ftplib.FTP_TLS):
+    """ftplib.FTP_TLS uses explicit TLS (AUTH TLS on a plaintext socket).
+    Bambu uses implicit TLS — the socket is TLS-wrapped before any FTP banner.
+    """
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):
+        if host:
+            self.host = host
+        if port:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.af = self.sock.family
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+        self.file = self.sock.makefile("r")
+        self.welcome = self.getresp()
+        return self.welcome
+
+
+def _parse_mlsd(line):
+    """Parse one MLSD line: 'type=file;size=12345;modify=...; filename.mp4'."""
+    parts = line.rsplit("; ", 1)
+    if len(parts) != 2:
+        return None
+    meta_raw, name = parts
+    meta = {}
+    for kv in meta_raw.split(";"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            meta[k.lower()] = v
+    return name, meta
+
+
+def _sync_timelapses():
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    ftp = _ImplicitFTPS(context=ctx)
+    ftp.connect(PRINTER_IP, 990, timeout=20)
+    ftp.login("bblp", PRINTER_ACCESS_CODE)
+    ftp.prot_p()  # encrypt data channel too
+
+    try:
+        try:
+            ftp.cwd(TIMELAPSE_REMOTE_DIR)
+        except ftplib.error_perm:
+            return  # no /timelapse yet (no captures recorded)
+
+        # Some vsFTPd builds don't support MLSD; fall back to NLST + SIZE.
+        entries = []
+        try:
+            ftp.retrlines("MLSD", entries.append)
+            files = []
+            for line in entries:
+                parsed = _parse_mlsd(line)
+                if not parsed:
+                    continue
+                name, meta = parsed
+                if meta.get("type") != "file":
+                    continue
+                size = int(meta["size"]) if "size" in meta else None
+                files.append((name, size))
+        except ftplib.error_perm:
+            entries = []
+            ftp.retrlines("NLST", entries.append)
+            files = []
+            for name in entries:
+                if not name or name in (".", ".."):
+                    continue
+                try:
+                    size = ftp.size(name)
+                except ftplib.error_perm:
+                    size = None
+                files.append((name, size))
+
+        os.makedirs(TIMELAPSE_DIR, exist_ok=True)
+        for name, size in files:
+            local_path = os.path.join(TIMELAPSE_DIR, name)
+            if os.path.exists(local_path):
+                if size is None or os.path.getsize(local_path) == size:
+                    continue
+            tmp = local_path + ".part"
+            print(f"[timelapse] downloading {name}" + (f" ({size} bytes)" if size else ""))
+            with open(tmp, "wb") as f:
+                ftp.retrbinary(f"RETR {name}", f.write)
+            os.rename(tmp, local_path)
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+
+def _timelapse_loop():
+    while True:
+        try:
+            _sync_timelapses()
+        except Exception as e:
+            print(f"[timelapse] {e!r}")
+        time.sleep(TIMELAPSE_POLL_SECONDS)
 
 
 # ----- Camera (RTSP/RTSPS via ffmpeg) -----
@@ -360,6 +478,8 @@ _missing = [k for k in ("PRINTER_IP", "PRINTER_SERIAL", "PRINTER_ACCESS_CODE")
 if _missing:
     raise SystemExit(f"Missing env vars: {', '.join(_missing)} (see .env.example)")
 threading.Thread(target=_mqtt_loop, daemon=True).start()
+if TIMELAPSE_POLL_SECONDS > 0 and TIMELAPSE_DIR:
+    threading.Thread(target=_timelapse_loop, daemon=True).start()
 
 
 if __name__ == "__main__":
