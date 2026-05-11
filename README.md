@@ -27,6 +27,96 @@ You will also need:
 - **Serial number** (Settings → Device Info)
 - **Access code** (Settings → WLAN → tap your network → Access Code)
 
+If you don't want to give up cloud features, see
+[Camera relay via a host (optional)](#camera-relay-via-a-host-optional) for an
+alternative that keeps the printer in cloud mode.
+
+## Camera relay via a host (optional)
+
+If you have an always-on machine (e.g. a Mac mini) running Bambu Studio, you
+can use **Bambu Studio's "Go Live"** feature + a small relay to serve the
+camera over plain RTSP. The container then connects to the relay instead of
+directly to the printer, so the H2D can stay in cloud mode (Bambu Handy app,
+cloud monitoring, etc. all keep working).
+
+Trade-offs:
+
+- ✅ Printer keeps full cloud connectivity
+- ✅ No Developer Mode / LAN Only Mode required for the camera
+- ❌ Adds a host dependency: Bambu Studio's background camera process must
+  stay running
+- ❌ One more hop in the video path
+
+### Setup (macOS, with Bambu Studio + MediaMTX)
+
+1. **Enable Go Live in Bambu Studio.** Select the printer → click the
+   camera-settings icon (top-right of the video panel) → toggle **Go Live**
+   on. Bambu Studio writes
+   `~/Library/Application Support/BambuStudio/cameratools/ffmpeg.sdp` and
+   spawns a background camera process that persists after you quit the GUI.
+
+2. **Install MediaMTX** (a multi-protocol streaming relay):
+
+   ```sh
+   brew install mediamtx
+   ```
+
+3. **Write the config to where brew's service expects it**
+   (`/opt/homebrew/etc/mediamtx/mediamtx.yml` on Apple Silicon — `brew services info
+   mediamtx` shows the exact path):
+
+   ```yaml
+   paths:
+     printer:
+       runOnInit: >
+         /opt/homebrew/bin/ffmpeg
+         -protocol_whitelist file,rtp,udp
+         -i "/Users/YOU/Library/Application Support/BambuStudio/cameratools/ffmpeg.sdp"
+         -c copy
+         -f rtsp rtsp://localhost:8554/printer
+       runOnInitRestart: yes
+   ```
+
+   Replace `YOU` with your username. `runOnInitRestart: yes` brings ffmpeg
+   back if Bambu Studio cycles the camera.
+
+4. **Start the service:**
+
+   ```sh
+   brew services start mediamtx
+   ```
+
+5. **Verify** from any host on your LAN:
+
+   ```sh
+   ffplay rtsp://<macmini-host>:8554/printer
+   ```
+
+   Initial H.264 "concealing N errors" lines are normal — RTSP clients have
+   to wait for the next keyframe.
+
+6. **Point bambu-dash at the relay** by setting `CAMERA_URL`:
+
+   ```sh
+   docker run … -e CAMERA_URL=rtsp://<macmini-host>:8554/printer …
+   ```
+
+   In Kubernetes, add `CAMERA_URL` to the env on the Deployment.
+
+7. **Optional: undo the printer hardening.** Once the relay is working, you
+   can turn off Developer Mode and LAN Only Mode on the H2D — the camera
+   keeps working via the relay. (`PRINTER_IP`, `PRINTER_SERIAL`,
+   `PRINTER_ACCESS_CODE` are still required for MQTT print status and
+   timelapse FTPS pulls, which work in cloud mode as long as the container
+   can reach the printer on the LAN.)
+
+### Common pitfall
+
+`brew services` ignores `~/.config/mediamtx/mediamtx.yml` and uses
+`/opt/homebrew/etc/mediamtx/mediamtx.yml` instead. If `ffplay rtsp://…:8554/printer`
+returns `404 Not Found`, double-check that the config above is at the
+brew-managed path — not somewhere else.
+
 ## Run locally
 
 Requires Python 3.12+ and `ffmpeg` on `PATH`.

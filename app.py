@@ -27,7 +27,7 @@ import time
 from queue import Queue, Empty, Full
 
 import paho.mqtt.client as mqtt
-from flask import Flask, Response, jsonify, render_template, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 PRINTER_IP = os.environ.get("PRINTER_IP", "")
 PRINTER_SERIAL = os.environ.get("PRINTER_SERIAL", "")
@@ -497,6 +497,44 @@ VIDEO_EXTS = (".mp4", ".avi", ".mkv", ".mov")
 THUMB_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
 
+def _safe_video_name(name):
+    """Validate a video filename came from the timelapses dir, not a traversal."""
+    if not name or "/" in name or "\\" in name or ".." in name:
+        return None
+    if not name.lower().endswith(VIDEO_EXTS):
+        return None
+    if not TIMELAPSE_DIR or not os.path.isfile(os.path.join(TIMELAPSE_DIR, name)):
+        return None
+    return name
+
+
+def _sidecar_path(name):
+    return os.path.join(TIMELAPSE_DIR, name + ".json")
+
+
+def _read_sidecar(name):
+    try:
+        with open(_sidecar_path(name), "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _write_sidecar(name, data):
+    path = _sidecar_path(name)
+    if data:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    else:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
 @app.route("/api/timelapses")
 def api_timelapses():
     if not TIMELAPSE_DIR or not os.path.isdir(TIMELAPSE_DIR):
@@ -516,14 +554,37 @@ def api_timelapses():
             continue
         base = os.path.splitext(entry.name)[0]
         stat = entry.stat()
+        meta = _read_sidecar(entry.name)
         items.append({
             "name": entry.name,
             "size": stat.st_size,
             "mtime": stat.st_mtime,
             "thumbnail": thumbs.get(base),
+            "url": meta.get("url"),
         })
     items.sort(key=lambda i: i["mtime"], reverse=True)
     return jsonify({"items": items})
+
+
+@app.route("/api/timelapses/<name>/url", methods=["POST"])
+def set_timelapse_url(name):
+    safe = _safe_video_name(name)
+    if not safe:
+        return jsonify({"error": "invalid name"}), 400
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if url:
+        if not url.lower().startswith(("http://", "https://")):
+            return jsonify({"error": "url must start with http:// or https://"}), 400
+        if len(url) > 2048:
+            return jsonify({"error": "url too long"}), 400
+    existing = _read_sidecar(safe)
+    if url:
+        existing["url"] = url
+    else:
+        existing.pop("url", None)
+    _write_sidecar(safe, existing)
+    return jsonify({"ok": True, "url": url or None})
 
 
 @app.route("/timelapses/<path:filename>")
