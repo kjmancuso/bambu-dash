@@ -212,6 +212,86 @@ def _parse_mlsd(line):
     return name, meta
 
 
+def _list_entries(ftp):
+    """Return [(name, kind, size)] for the current FTP directory.
+    kind is 'file' or 'dir'. Tries MLSD first, falls back to NLST + SIZE probe.
+    """
+    lines = []
+    try:
+        ftp.retrlines("MLSD", lines.append)
+    except ftplib.error_perm:
+        lines = None
+
+    if lines is not None:
+        out = []
+        for line in lines:
+            parsed = _parse_mlsd(line)
+            if not parsed:
+                continue
+            name, meta = parsed
+            if name in (".", ".."):
+                continue
+            t = meta.get("type", "")
+            if t in ("cdir", "pdir"):
+                continue
+            kind = "dir" if t == "dir" else ("file" if t == "file" else None)
+            if kind is None:
+                continue
+            size = int(meta["size"]) if "size" in meta else None
+            out.append((name, kind, size))
+        return out
+
+    # NLST fallback: probe each entry with SIZE — files return a size, dirs 550.
+    names = []
+    ftp.retrlines("NLST", names.append)
+    out = []
+    for name in names:
+        if not name or name in (".", ".."):
+            continue
+        try:
+            size = ftp.size(name)
+            out.append((name, "file", size))
+        except ftplib.error_perm:
+            out.append((name, "dir", None))
+    return out
+
+
+def _download_file(ftp, name, local_path, size):
+    if os.path.exists(local_path):
+        if size is None or os.path.getsize(local_path) == size:
+            return
+    tmp = local_path + ".part"
+    print(f"[timelapse] downloading {local_path}" + (f" ({size} bytes)" if size else ""))
+    try:
+        with open(tmp, "wb") as f:
+            ftp.retrbinary(f"RETR {name}", f.write)
+        os.rename(tmp, local_path)
+    except Exception as e:
+        print(f"[timelapse] failed {local_path}: {e!r}")
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _walk_and_sync(ftp, remote_dir, local_dir, depth=0):
+    if depth > 4:
+        return  # safety cap; Bambu's tree is just /timelapse and /timelapse/thumbnail
+    try:
+        ftp.cwd(remote_dir)
+    except ftplib.error_perm:
+        return  # remote dir doesn't exist (no captures yet)
+    os.makedirs(local_dir, exist_ok=True)
+    for name, kind, size in _list_entries(ftp):
+        sub_remote = f"{remote_dir.rstrip('/')}/{name}"
+        sub_local = os.path.join(local_dir, name)
+        if kind == "file":
+            _download_file(ftp, name, sub_local, size)
+        elif kind == "dir":
+            _walk_and_sync(ftp, sub_remote, sub_local, depth + 1)
+            ftp.cwd(remote_dir)  # restore CWD after recursion
+
+
 def _sync_timelapses():
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -221,51 +301,8 @@ def _sync_timelapses():
     ftp.connect(PRINTER_IP, 990, timeout=20)
     ftp.login("bblp", PRINTER_ACCESS_CODE)
     ftp.prot_p()  # encrypt data channel too
-
     try:
-        try:
-            ftp.cwd(TIMELAPSE_REMOTE_DIR)
-        except ftplib.error_perm:
-            return  # no /timelapse yet (no captures recorded)
-
-        # Some vsFTPd builds don't support MLSD; fall back to NLST + SIZE.
-        entries = []
-        try:
-            ftp.retrlines("MLSD", entries.append)
-            files = []
-            for line in entries:
-                parsed = _parse_mlsd(line)
-                if not parsed:
-                    continue
-                name, meta = parsed
-                if meta.get("type") != "file":
-                    continue
-                size = int(meta["size"]) if "size" in meta else None
-                files.append((name, size))
-        except ftplib.error_perm:
-            entries = []
-            ftp.retrlines("NLST", entries.append)
-            files = []
-            for name in entries:
-                if not name or name in (".", ".."):
-                    continue
-                try:
-                    size = ftp.size(name)
-                except ftplib.error_perm:
-                    size = None
-                files.append((name, size))
-
-        os.makedirs(TIMELAPSE_DIR, exist_ok=True)
-        for name, size in files:
-            local_path = os.path.join(TIMELAPSE_DIR, name)
-            if os.path.exists(local_path):
-                if size is None or os.path.getsize(local_path) == size:
-                    continue
-            tmp = local_path + ".part"
-            print(f"[timelapse] downloading {name}" + (f" ({size} bytes)" if size else ""))
-            with open(tmp, "wb") as f:
-                ftp.retrbinary(f"RETR {name}", f.write)
-            os.rename(tmp, local_path)
+        _walk_and_sync(ftp, TIMELAPSE_REMOTE_DIR, TIMELAPSE_DIR)
     finally:
         try:
             ftp.quit()
