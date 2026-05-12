@@ -191,6 +191,15 @@
     text-decoration: none; font-weight: 600;
   }
   .tl-link:hover { background: rgba(0,0,0,0.9); }
+  .tl-failed-chip {
+    position: absolute; top: 6px; left: 6px; z-index: 1;
+    background: rgba(0,0,0,0.7); color: var(--err);
+    border-radius: 4px; padding: 3px 7px; font-size: 11px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .tl-thumb.failed {
+    box-shadow: inset 0 0 0 3px var(--err);
+  }
 </style>
 </head>
 <body>
@@ -265,6 +274,10 @@
       <input type="url" id="lightbox-url" placeholder="https://makerworld.com/... (optional)">
       <a class="open-link" id="lightbox-open" href="#" target="_blank" rel="noopener" hidden>Open ↗</a>
       <button id="lightbox-save" class="primary">Save</button>
+      <label style="display: flex; align-items: center; gap: 6px; color: var(--err); cursor: pointer; user-select: none">
+        <input type="checkbox" id="lightbox-failed">
+        Failed
+      </label>
       <span id="lightbox-status" style="color: var(--muted); font-size: 12px"></span>
     </div>
   </div>
@@ -447,9 +460,11 @@ async function loadTimelapses() {
       const link = it.url
         ? `<a class="tl-link" href="${escapeAttr(it.url)}" target="_blank" rel="noopener" title="${escapeAttr(it.url)}">model ↗</a>`
         : "";
+      const failedChip = it.failed ? `<span class="tl-failed-chip">failed</span>` : "";
+      const thumbClass = it.failed ? "tl-thumb failed" : "tl-thumb";
       return `
-        <div class="tl-card" data-name="${encodeURIComponent(it.name)}" data-title="${escapeAttr(it.name)}" data-url="${escapeAttr(it.url || '')}">
-          <div class="tl-thumb">${thumb}${link}</div>
+        <div class="tl-card" data-name="${encodeURIComponent(it.name)}" data-title="${escapeAttr(it.name)}" data-url="${escapeAttr(it.url || '')}" data-failed="${it.failed ? '1' : ''}">
+          <div class="${thumbClass}">${thumb}${failedChip}${link}</div>
           <div class="tl-meta">
             <div class="tl-name" title="${escapeAttr(it.name)}">${it.name}</div>
             <div class="tl-sub">${fmtDate(it.mtime)} · ${fmtBytes(it.size)}</div>
@@ -469,7 +484,7 @@ function escapeAttr(s) {
 
 let currentTimelapse = null; // { name, title }
 
-function openTimelapse(name, title, url) {
+function openTimelapse(name, title, url, failed) {
   currentTimelapse = { name, title };
   const lb = document.getElementById("lightbox");
   const video = document.getElementById("lightbox-video");
@@ -478,6 +493,7 @@ function openTimelapse(name, title, url) {
   const input = document.getElementById("lightbox-url");
   input.value = url || "";
   updateOpenLink(url || "");
+  document.getElementById("lightbox-failed").checked = !!failed;
   document.getElementById("lightbox-status").textContent = "";
   lb.classList.add("show");
   video.play().catch(() => { /* user can click play */ });
@@ -533,11 +549,34 @@ document.getElementById("tl-grid").addEventListener("click", e => {
   }
   const card = e.target.closest(".tl-card");
   if (!card) return;
-  openTimelapse(card.dataset.name, card.dataset.title, card.dataset.url);
+  openTimelapse(card.dataset.name, card.dataset.title, card.dataset.url, card.dataset.failed === "1");
 });
 document.getElementById("lightbox-save").addEventListener("click", saveTimelapseUrl);
 document.getElementById("lightbox-url").addEventListener("input", e => {
   updateOpenLink(e.target.value.trim());
+});
+document.getElementById("lightbox-failed").addEventListener("change", async e => {
+  if (!currentTimelapse) return;
+  const status = document.getElementById("lightbox-status");
+  status.textContent = "saving…";
+  try {
+    const r = await fetch(`/api/timelapses/${currentTimelapse.name}/failed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ failed: e.target.checked })
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      status.textContent = data.error || "failed";
+      e.target.checked = !e.target.checked;  // revert
+      return;
+    }
+    status.textContent = "saved";
+    loadTimelapses();
+  } catch (err) {
+    status.textContent = "error";
+    e.target.checked = !e.target.checked;
+  }
 });
 document.getElementById("lightbox-close").addEventListener("click", closeLightbox);
 document.getElementById("lightbox").addEventListener("click", e => {

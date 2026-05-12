@@ -113,49 +113,43 @@ def _stage_label(code):
     return _STAGE_NAMES.get(code, f"Stage {code}")
 
 
+def _q16_temp(v):
+    """Decode a Q16.16 fixed-point temperature (used by H2D's device.extruder.info[].temp)."""
+    f = _float_or_none(v)
+    return (f / 65536.0) if f is not None else None
+
+
 def _nozzle_temps(p):
-    """Return a list of {'temp': float|None, 'target': float|None} per nozzle.
-    Tries dual-nozzle H2D layouts first, falls back to the single-nozzle fields.
+    """Per-nozzle current temps. H2D reports them at device.extruder.info[].temp
+    as Q16.16 fixed-point. Targets aren't reliably exposed per-nozzle on this
+    firmware; we surface them only on the single-nozzle fallback path.
     """
-    # H2D dual-head layouts — Bambu has used a few variations; try in order.
-    candidates = (
-        p.get("device", {}).get("nozzle", {}).get("info"),
-        p.get("device", {}).get("nozzle", {}).get("state"),
-        p.get("device", {}).get("head"),
-    )
-    for arr in candidates:
-        if isinstance(arr, list) and len(arr) >= 2:
-            out = []
-            for item in arr:
-                if not isinstance(item, dict):
-                    continue
-                out.append({
-                    "temp": _float_or_none(
-                        item.get("temp") or item.get("nozzle_temper")
-                        or item.get("now")
-                    ),
-                    "target": _float_or_none(
-                        item.get("target_temp") or item.get("nozzle_target_temper")
-                        or item.get("target")
-                    ),
-                })
-            if out:
-                return out
+    info = p.get("device", {}).get("extruder", {}).get("info")
+    if isinstance(info, list) and len(info) >= 2:
+        out = []
+        for item in info:
+            if not isinstance(item, dict):
+                continue
+            out.append({"temp": _q16_temp(item.get("temp")), "target": None})
+        if out:
+            return out
 
-    # Flat dual-nozzle fields some firmwares emit.
-    if "nozzle_temper_1" in p or "nozzle_target_temper_1" in p:
-        return [
-            {"temp": _float_or_none(p.get("nozzle_temper")),
-             "target": _float_or_none(p.get("nozzle_target_temper"))},
-            {"temp": _float_or_none(p.get("nozzle_temper_1")),
-             "target": _float_or_none(p.get("nozzle_target_temper_1"))},
-        ]
-
-    # Single-nozzle fallback (X1, P1, A1, single-head H2D mode).
+    # Single-nozzle fallback (X1 / P1 / A1).
     return [{
         "temp": _float_or_none(p.get("nozzle_temper")),
         "target": _float_or_none(p.get("nozzle_target_temper")),
     }]
+
+
+def _chamber_temp(p):
+    """Top-level chamber_temper isn't always emitted; fall back to device.ctc."""
+    top = _float_or_none(p.get("chamber_temper"))
+    if top is not None:
+        return top
+    ctc = p.get("device", {}).get("ctc", {})
+    if isinstance(ctc, dict):
+        return _float_or_none(ctc.get("info", {}).get("temp"))
+    return None
 
 
 def _summarize_tray(tray):
@@ -208,7 +202,7 @@ def _summarize(raw):
         "nozzles": nozzles,
         "bed_temp": p.get("bed_temper"),
         "bed_target": p.get("bed_target_temper"),
-        "chamber_temp": p.get("chamber_temper"),
+        "chamber_temp": _chamber_temp(p),
         "speed_level": p.get("spd_lvl"),
         "wifi": p.get("wifi_signal"),
         "error": p.get("print_error"),
@@ -669,9 +663,26 @@ def api_timelapses():
             "mtime": stat.st_mtime,
             "thumbnail": thumbs.get(base),
             "url": meta.get("url"),
+            "failed": bool(meta.get("failed")),
         })
     items.sort(key=lambda i: i["mtime"], reverse=True)
     return jsonify({"items": items})
+
+
+@app.route("/api/timelapses/<name>/failed", methods=["POST"])
+def set_timelapse_failed(name):
+    safe = _safe_video_name(name)
+    if not safe:
+        return jsonify({"error": "invalid name"}), 400
+    data = request.get_json(silent=True) or {}
+    failed = bool(data.get("failed"))
+    existing = _read_sidecar(safe)
+    if failed:
+        existing["failed"] = True
+    else:
+        existing.pop("failed", None)
+    _write_sidecar(safe, existing)
+    return jsonify({"ok": True, "failed": failed})
 
 
 @app.route("/api/timelapses/<name>/url", methods=["POST"])
