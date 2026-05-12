@@ -120,9 +120,12 @@ def _q16_temp(v):
 
 
 def _nozzle_temps(p):
-    """Per-nozzle current temps. H2D reports them at device.extruder.info[].temp
-    as Q16.16 fixed-point. Targets aren't reliably exposed per-nozzle on this
-    firmware; we surface them only on the single-nozzle fallback path.
+    """Per-nozzle current + target temps.
+
+    H2D reports per-nozzle current temps at device.extruder.info[].temp as
+    Q16.16 fixed-point. Per-nozzle targets aren't exposed in push_status, so
+    we attach the top-level nozzle_target_temper to whichever nozzle is
+    currently warmest (best-effort — it's still a single global field).
     """
     info = p.get("device", {}).get("extruder", {}).get("info")
     if isinstance(info, list) and len(info) >= 2:
@@ -132,6 +135,11 @@ def _nozzle_temps(p):
                 continue
             out.append({"temp": _q16_temp(item.get("temp")), "target": None})
         if out:
+            target = _float_or_none(p.get("nozzle_target_temper"))
+            if target is not None and len(out) >= 2:
+                temps = [(i, e["temp"] or 0) for i, e in enumerate(out)]
+                hottest = max(temps, key=lambda x: x[1])[0]
+                out[hottest]["target"] = target
             return out
 
     # Single-nozzle fallback (X1 / P1 / A1).

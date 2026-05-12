@@ -323,14 +323,18 @@ async function tick() {
     document.getElementById("stage").textContent = s.stage_label ? `· ${s.stage_label}` : "";
 
     const nozzles = s.nozzles || [{ temp: s.nozzle_temp, target: s.nozzle_target }];
-    document.getElementById("nozzle-label").textContent = nozzles.length > 1 ? "Nozzle L" : "Nozzle";
-    document.getElementById("nozzle").textContent = fmtTemp(nozzles[0]?.temp);
-    document.getElementById("nozzle-target").textContent = fmtTarget(nozzles[0]?.target);
+    // Display order: physical left first, right second. The MQTT array indexes
+    // are swapped relative to physical position, so nozzles[1] is left.
+    const left = nozzles.length > 1 ? nozzles[1] : nozzles[0];
+    const right = nozzles.length > 1 ? nozzles[0] : null;
+    document.getElementById("nozzle-label").textContent = right ? "Nozzle L" : "Nozzle";
+    document.getElementById("nozzle").textContent = fmtTemp(left?.temp);
+    document.getElementById("nozzle-target").textContent = fmtTarget(left?.target);
     const n2 = document.getElementById("stat-nozzle-2");
-    if (nozzles.length > 1) {
+    if (right) {
       n2.style.display = "";
-      document.getElementById("nozzle2").textContent = fmtTemp(nozzles[1]?.temp);
-      document.getElementById("nozzle2-target").textContent = fmtTarget(nozzles[1]?.target);
+      document.getElementById("nozzle2").textContent = fmtTemp(right.temp);
+      document.getElementById("nozzle2-target").textContent = fmtTarget(right.target);
     } else {
       n2.style.display = "none";
     }
