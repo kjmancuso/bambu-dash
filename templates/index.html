@@ -207,6 +207,7 @@
     <div class="job">CURRENT JOB</div>
     <div class="job-name" id="job">—</div>
     <span class="state" id="state">UNKNOWN</span>
+    <span id="stage" style="margin-left: 8px; font-size: 12px; color: var(--muted);"></span>
 
     <div class="progress"><div class="progress-bar" id="bar"></div></div>
     <div class="progress-meta">
@@ -214,11 +215,16 @@
       <span id="remaining">—</span>
     </div>
 
-    <div class="stats">
-      <div class="stat">
-        <div class="label">Nozzle</div>
+    <div class="stats" id="stats">
+      <div class="stat" id="stat-nozzle">
+        <div class="label" id="nozzle-label">Nozzle</div>
         <div class="value" id="nozzle">—</div>
         <div class="sub" id="nozzle-target"></div>
+      </div>
+      <div class="stat" id="stat-nozzle-2" style="display:none">
+        <div class="label">Nozzle R</div>
+        <div class="value" id="nozzle2">—</div>
+        <div class="sub" id="nozzle2-target"></div>
       </div>
       <div class="stat">
         <div class="label">Bed</div>
@@ -301,8 +307,21 @@ async function tick() {
     document.getElementById("pct").textContent = pct + "%";
     document.getElementById("remaining").textContent = fmtRemaining(s.remaining_min);
 
-    document.getElementById("nozzle").textContent = fmtTemp(s.nozzle_temp);
-    document.getElementById("nozzle-target").textContent = fmtTarget(s.nozzle_target);
+    document.getElementById("stage").textContent = s.stage_label ? `· ${s.stage_label}` : "";
+
+    const nozzles = s.nozzles || [{ temp: s.nozzle_temp, target: s.nozzle_target }];
+    document.getElementById("nozzle-label").textContent = nozzles.length > 1 ? "Nozzle L" : "Nozzle";
+    document.getElementById("nozzle").textContent = fmtTemp(nozzles[0]?.temp);
+    document.getElementById("nozzle-target").textContent = fmtTarget(nozzles[0]?.target);
+    const n2 = document.getElementById("stat-nozzle-2");
+    if (nozzles.length > 1) {
+      n2.style.display = "";
+      document.getElementById("nozzle2").textContent = fmtTemp(nozzles[1]?.temp);
+      document.getElementById("nozzle2-target").textContent = fmtTarget(nozzles[1]?.target);
+    } else {
+      n2.style.display = "none";
+    }
+
     document.getElementById("bed").textContent = fmtTemp(s.bed_temp);
     document.getElementById("bed-target").textContent = fmtTarget(s.bed_target);
     document.getElementById("chamber").textContent = fmtTemp(s.chamber_temp);

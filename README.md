@@ -192,7 +192,7 @@ bridge to the LAN by default, `hostNetwork: true` works.
 | Path           | Description                                            |
 | -------------- | ------------------------------------------------------ |
 | `/`            | Dashboard HTML                                         |
-| `/api/status`  | JSON: `{ connected, summary }` derived from printer MQTT |
+| `/api/status`  | JSON: `{ connected, summary, raw }` from printer MQTT     |
 | `/stream.mjpg` | `multipart/x-mixed-replace` MJPEG of the chamber cam   |
 | `/healthz`     | `"ok"` 200 (for liveness/readiness probes)             |
 

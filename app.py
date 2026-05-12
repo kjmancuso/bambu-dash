@@ -57,6 +57,107 @@ def _int_or_none(v):
         return None
 
 
+def _float_or_none(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# Bambu firmware's print stage codes. -1 / 255 mean "no active stage".
+_STAGE_NAMES = {
+    0: "Printing",
+    1: "Auto bed leveling",
+    2: "Heatbed preheating",
+    3: "Sweeping XY mech",
+    4: "Changing filament",
+    5: "M400 pause",
+    6: "Paused: filament runout",
+    7: "Heating hotend",
+    8: "Calibrating extrusion",
+    9: "Scanning bed surface",
+    10: "Inspecting first layer",
+    11: "Identifying build plate",
+    12: "Calibrating Micro Lidar",
+    13: "Homing toolhead",
+    14: "Cleaning nozzle",
+    15: "Checking extruder temp",
+    16: "Paused by user",
+    17: "Paused: front cover",
+    18: "Calibrating Micro Lidar",
+    19: "Calibrating extrusion flow",
+    20: "Paused: nozzle temp malfunction",
+    21: "Paused: bed temp malfunction",
+    22: "Filament unloading",
+    23: "Skip-step pause",
+    24: "Filament loading",
+    25: "Motor noise calibration",
+    26: "Paused: AMS lost",
+    27: "Paused: low fan speed (heat break)",
+    28: "Paused: chamber temp control error",
+    29: "Cooling chamber",
+    30: "Paused: user-triggered gcode",
+    31: "Motor noise showoff",
+    32: "Nozzle filament covered",
+    33: "Cutter error",
+    34: "First layer error",
+    35: "Nozzle clog",
+}
+
+
+def _stage_label(code):
+    if code is None:
+        return None
+    if code in (-1, 255):
+        return None
+    return _STAGE_NAMES.get(code, f"Stage {code}")
+
+
+def _nozzle_temps(p):
+    """Return a list of {'temp': float|None, 'target': float|None} per nozzle.
+    Tries dual-nozzle H2D layouts first, falls back to the single-nozzle fields.
+    """
+    # H2D dual-head layouts — Bambu has used a few variations; try in order.
+    candidates = (
+        p.get("device", {}).get("nozzle", {}).get("info"),
+        p.get("device", {}).get("nozzle", {}).get("state"),
+        p.get("device", {}).get("head"),
+    )
+    for arr in candidates:
+        if isinstance(arr, list) and len(arr) >= 2:
+            out = []
+            for item in arr:
+                if not isinstance(item, dict):
+                    continue
+                out.append({
+                    "temp": _float_or_none(
+                        item.get("temp") or item.get("nozzle_temper")
+                        or item.get("now")
+                    ),
+                    "target": _float_or_none(
+                        item.get("target_temp") or item.get("nozzle_target_temper")
+                        or item.get("target")
+                    ),
+                })
+            if out:
+                return out
+
+    # Flat dual-nozzle fields some firmwares emit.
+    if "nozzle_temper_1" in p or "nozzle_target_temper_1" in p:
+        return [
+            {"temp": _float_or_none(p.get("nozzle_temper")),
+             "target": _float_or_none(p.get("nozzle_target_temper"))},
+            {"temp": _float_or_none(p.get("nozzle_temper_1")),
+             "target": _float_or_none(p.get("nozzle_target_temper_1"))},
+        ]
+
+    # Single-nozzle fallback (X1, P1, A1, single-head H2D mode).
+    return [{
+        "temp": _float_or_none(p.get("nozzle_temper")),
+        "target": _float_or_none(p.get("nozzle_target_temper")),
+    }]
+
+
 def _summarize_tray(tray):
     color = (tray.get("tray_color") or "").strip()
     rgb = color[:6] if len(color) >= 6 else None  # strip alpha if "RRGGBBAA"
@@ -90,15 +191,21 @@ def _summarize_ams(p):
 
 def _summarize(raw):
     p = raw.get("print", {}) if isinstance(raw, dict) else {}
+    nozzles = _nozzle_temps(p)
     return {
         "state": p.get("gcode_state"),
+        "stage": _int_or_none(p.get("stg_cur")),
+        "stage_label": _stage_label(_int_or_none(p.get("stg_cur"))),
         "progress": p.get("mc_percent"),
         "remaining_min": p.get("mc_remaining_time"),
         "layer": p.get("layer_num"),
         "total_layers": p.get("total_layer_num"),
         "job": p.get("subtask_name") or p.get("gcode_file"),
-        "nozzle_temp": p.get("nozzle_temper"),
-        "nozzle_target": p.get("nozzle_target_temper"),
+        # Back-compat single-nozzle fields (first entry).
+        "nozzle_temp": nozzles[0]["temp"] if nozzles else None,
+        "nozzle_target": nozzles[0]["target"] if nozzles else None,
+        # Dual-head: list of {temp, target}.
+        "nozzles": nozzles,
         "bed_temp": p.get("bed_temper"),
         "bed_target": p.get("bed_target_temper"),
         "chamber_temp": p.get("chamber_temper"),
@@ -490,6 +597,7 @@ def api_status():
         return jsonify({
             "connected": _status["connected"],
             "summary": _summarize(_status["raw"]),
+            "raw": _status["raw"],
         })
 
 
