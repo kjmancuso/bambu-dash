@@ -374,7 +374,7 @@ function renderAms(ams) {
   }
   section.style.display = "block";
 
-  const activeTray = ams.active_tray != null ? parseInt(ams.active_tray, 10) : -1;
+  const activeSlots = Array.isArray(ams.active_slots) ? ams.active_slots : [];
   const html = units.map(unit => {
     const headBits = [];
     if (unit.humidity != null) headBits.push(`humidity ${unit.humidity}/5`);
@@ -382,7 +382,7 @@ function renderAms(ams) {
     const head = headBits.join(" · ") || "";
     const trays = (unit.trays || []).map(t => {
       const globalId = (unit.id ?? 0) * 4 + (t.id ?? 0);
-      const active = globalId === activeTray;
+      const active = activeSlots.includes(globalId);
       const remain = t.remain != null && t.remain >= 0 ? t.remain : null;
       const fill = t.empty ? 0 : (remain != null ? remain : 100);
       const color = t.color || "#555";
@@ -412,7 +412,7 @@ function renderAms(ams) {
   if (ams.external && !ams.external.empty) {
     const t = ams.external;
     const remain = t.remain != null && t.remain >= 0 ? `${t.remain}%` : "loaded";
-    const active = activeTray === 254;
+    const active = ams.external_active === true;
     extraHtml = `
       <div class="ams-unit">
         <div class="ams-unit-head">

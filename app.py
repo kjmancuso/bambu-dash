@@ -102,6 +102,8 @@ _STAGE_NAMES = {
     33: "Cutter error",
     34: "First layer error",
     35: "Nozzle clog",
+    39: "Nozzle offset calibration",
+    74: "Heatbed foreign object detection",
 }
 
 
@@ -173,6 +175,36 @@ def _summarize_tray(tray):
     }
 
 
+def _active_slots(p):
+    """Global slot ids (ams_id*4 + tray_id) currently loaded into a nozzle.
+
+    H2D dual-head: each extruder reports its loaded slot in
+    device.extruder.info[].snow, encoded as (ams_id << 8) | tray_id. We
+    highlight every loaded slot (one per nozzle). Single-nozzle printers
+    (X1/P1/A1) don't have this; fall back to ams.tray_now, which is already
+    a global ams_id*4 + tray_id index there.
+    """
+    info = p.get("device", {}).get("extruder", {}).get("info")
+    if isinstance(info, list) and len(info) >= 2:
+        slots = set()
+        for e in info:
+            if not isinstance(e, dict):
+                continue
+            snow = e.get("snow")
+            if not isinstance(snow, int):
+                continue
+            ams_id, tray_id = snow >> 8, snow & 0xFF
+            if 0 <= tray_id <= 3 and 0 <= ams_id <= 15:
+                slots.add(ams_id * 4 + tray_id)
+        if slots:
+            return sorted(slots)
+
+    tn = _int_or_none((p.get("ams") or {}).get("tray_now"))
+    if tn is not None and tn not in (254, 255, 65535):
+        return [tn]
+    return []
+
+
 def _summarize_ams(p):
     ams_root = p.get("ams") or {}
     units = []
@@ -184,9 +216,12 @@ def _summarize_ams(p):
             "trays": [_summarize_tray(t) for t in unit.get("tray") or []],
         })
     vt = p.get("vt_tray")
+    tray_now = _int_or_none(ams_root.get("tray_now"))
     return {
         "units": units,
-        "active_tray": ams_root.get("tray_now"),  # global tray id as string
+        "active_tray": ams_root.get("tray_now"),  # kept for compat
+        "active_slots": _active_slots(p),
+        "external_active": tray_now in (254, 255),
         "external": _summarize_tray(vt) if isinstance(vt, dict) else None,
     }
 
